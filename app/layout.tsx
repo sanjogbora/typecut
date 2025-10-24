@@ -32,9 +32,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${manrope.variable} ${domine.variable} font-sans antialiased`}>
-        <div className="h-screen flex flex-col overflow-hidden">
+        <div className="h-screen flex flex-col overflow-hidden md:overflow-hidden overflow-y-auto">
           <Navbar />
-          <div className="flex-1 overflow-hidden">{children}</div>
+          <div className="flex-1 overflow-hidden md:overflow-hidden overflow-y-auto">{children}</div>
         </div>
         <Analytics />
       </body>
