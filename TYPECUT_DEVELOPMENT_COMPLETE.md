@@ -36,7 +36,7 @@
 ## 🔧 Critical Technical Achievements
 
 ### **Performance Optimizations (87% Improvement)**
-```typescript
+\`\`\`typescript
 // Debounced font loading with parallel processing
 const fontLoadPromises = uniques.map(async (f) => {
   if (loadedFontsCache.current.has(f)) return // Skip cached
@@ -53,10 +53,10 @@ if (idx === lastFontIndexRef.current) return // Skip unnecessary redraws
 const fontTestCache = new Map<string, boolean>()
 if (fontTestCache.has(fontName)) return fontTestCache.get(fontName)
 // 95% reduction in font testing
-```
+\`\`\`
 
 ### **Export Quality Improvements**
-```typescript
+\`\`\`typescript
 // Crisp GIF export with hard edges
 exportCtx.imageSmoothingEnabled = false
 exportCtx.textRenderingOptimization = 'geometricPrecision'
@@ -69,10 +69,10 @@ const paddingX = Math.max(60, fontSize * 0.4)
 const paddingY = Math.max(30, fontSize * 0.2) // 50% less vertical padding
 const optimalWidth = Math.ceil(textWidth + (paddingX * 2))
 // 40-70% smaller export files
-```
+\`\`\`
 
 ### **Layout Architecture**
-```tsx
+\`\`\`tsx
 // Master container for perfect viewport fit
 <div className="h-screen flex flex-col overflow-hidden">
   <Navbar />                                    // h-14 (56px)
@@ -83,10 +83,10 @@ const optimalWidth = Math.ceil(textWidth + (paddingX * 2))
     <footer className="py-2">                  // Compact footer
   </div>
 </div>
-```
+\`\`\`
 
 ### **State Management**
-```typescript
+\`\`\`typescript
 // localStorage persistence for all settings
 const [text, setText] = useState(() => {
   return localStorage.getItem('typecut-text') || "@sanjogsays"
@@ -96,7 +96,7 @@ useEffect(() => {
   localStorage.setItem('typecut-text', text)
 }, [text])
 // Applied to: text, duration, switchCount, fontSize, selectedFonts, textColor
-```
+\`\`\`
 
 ## 📊 Key Metrics & Improvements
 
