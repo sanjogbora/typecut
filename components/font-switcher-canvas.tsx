@@ -13,6 +13,7 @@ import { Popover, PopoverContent, PopoverAnchor } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
+import { GOOGLE_FONTS, FONT_CATEGORIES, isGoogleFont as checkIsGoogleFont } from "../utils/google-fonts"
 
 // Utility: curated font list to start; can be expanded or randomized later.
 const CURATED_FONTS = [
@@ -55,13 +56,52 @@ function shuffleArray<T>(arr: T[]): T[] {
   const a = arr.slice()
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j], a[i]]
+      ;[a[i], a[j]] = [a[j], a[i]]
   }
   return a
 }
 
 function normalizeFontName(name: string): string {
   return name.trim().replace(/\s+/g, " ")
+}
+
+// Optimized font verification with caching
+const fontTestCache = new Map<string, boolean>()
+function testFontWorks(fontName: string): boolean {
+  // Check cache first for performance
+  if (fontTestCache.has(fontName)) {
+    return fontTestCache.get(fontName)!
+  }
+
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = 100
+    canvas.height = 30
+    const ctx = canvas.getContext('2d')!
+
+    // Optimized test string (shorter for performance)
+    const testString = 'ABCabc123'
+
+    // Test with target font
+    ctx.font = `16px "${fontName}"`
+    const targetWidth = ctx.measureText(testString).width
+
+    // Test with Arial fallback
+    ctx.font = '16px Arial'
+    const arialWidth = ctx.measureText(testString).width
+
+    // Font works if it renders differently from Arial
+    const works = Math.abs(targetWidth - arialWidth) > 0.5
+
+    // Cache result for future use
+    fontTestCache.set(fontName, works)
+
+    return works
+  } catch (error) {
+    // Cache negative result too
+    fontTestCache.set(fontName, false)
+    return false
+  }
 }
 
 async function isFontUsable(family: string): Promise<boolean> {
@@ -93,24 +133,67 @@ async function verifyUsableFonts(fonts: string[]): Promise<string[]> {
   return usable
 }
 
+// Helper function to create safe filename from text
+function createSafeFilename(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '-') // Replace non-alphanumeric with hyphens
+    .replace(/-+/g, '-') // Replace multiple hyphens with single
+    .replace(/^-|-$/g, '') // Remove leading/trailing hyphens
+    .slice(0, 20) // Limit length to 20 characters
+}
+
 export default function FontSwitcherCanvas() {
-  // Controls
-  const [text, setText] = useState("@sanjogsays")
-  const [durationSec, setDurationSec] = useState(3) // was 5 → 3s default
-  const [switchCount, setSwitchCount] = useState(20) // 2-100
-  const [fontSize, setFontSize] = useState(80) // was 120 → 80 default
-  const [selectedFonts, setSelectedFonts] = useState<string[]>(CURATED_FONTS.slice(0, 5))
+  // Controls with localStorage persistence
+  const [text, setText] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('typecut-text') || "@sanjogsays"
+    }
+    return "@sanjogsays"
+  })
+  const [durationSec, setDurationSec] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return Number(localStorage.getItem('typecut-duration')) || 3
+    }
+    return 3
+  })
+  const [switchCount, setSwitchCount] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return Number(localStorage.getItem('typecut-switchCount')) || 20
+    }
+    return 20
+  })
+  const [fontSize, setFontSize] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return Number(localStorage.getItem('typecut-fontSize')) || 80
+    }
+    return 80
+  })
+  const [selectedFonts, setSelectedFonts] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('typecut-selectedFonts')
+      return saved ? JSON.parse(saved) : CURATED_FONTS.slice(0, 5)
+    }
+    return CURATED_FONTS.slice(0, 5)
+  })
   const [playing, setPlaying] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [exportKind, setExportKind] = useState<"webm" | "gif" | "ae" | null>(null)
-  const [transparentBg, setTransparentBg] = useState(true)
+  const [exportProgress, setExportProgress] = useState(0)
+  const transparentBg = true // Always transparent background
   const [bgColor, setBgColor] = useState("#ffffff")
-  const [textColor, setTextColor] = useState("#111111") // new: text color state for drawing and control
+  const [textColor, setTextColor] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('typecut-textColor') || "#111111"
+    }
+    return "#111111"
+  })
   const localFontFamiliesRef = useRef<Set<string>>(new Set())
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const [systemFontAccessAllowed, setSystemFontAccessAllowed] = useState(false)
   const [allowSystemFonts, setAllowSystemFonts] = useState(false)
+  const [allowGoogleFonts, setAllowGoogleFonts] = useState(true)
   const [fontSearch, setFontSearch] = useState("")
   const [availableSystemFonts, setAvailableSystemFonts] = useState<string[]>([])
   const [localFontFamilies, setLocalFontFamilies] = useState<string[]>([])
@@ -152,6 +235,43 @@ export default function FontSwitcherCanvas() {
     setSystemFontAccessAllowed(detectSystemFontAccessAllowed())
   }, [])
 
+  // Persist settings to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('typecut-text', text)
+    }
+  }, [text])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('typecut-duration', durationSec.toString())
+    }
+  }, [durationSec])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('typecut-switchCount', switchCount.toString())
+    }
+  }, [switchCount])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('typecut-fontSize', fontSize.toString())
+    }
+  }, [fontSize])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('typecut-selectedFonts', JSON.stringify(selectedFonts))
+    }
+  }, [selectedFonts])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('typecut-textColor', textColor)
+    }
+  }, [textColor])
+
   useEffect(() => {
     if (!allowSystemFonts) return
 
@@ -169,9 +289,9 @@ export default function FontSwitcherCanvas() {
 
     // Guard against re-entrancy and duplicate permission prompts
     if (sysFontStatus === "loading" || sysFontStatus === "ready") return
-    ;(async () => {
-      await loadSystemFontCatalog()
-    })()
+      ; (async () => {
+        await loadSystemFontCatalog()
+      })()
   }, [allowSystemFonts, systemFontAccessAllowed, sysFontStatus, toast])
 
   // Canvas references
@@ -180,9 +300,52 @@ export default function FontSwitcherCanvas() {
   const startRef = useRef<number | null>(null)
   const lastFontIndexRef = useRef<number>(-1)
 
-  // Dimensions (CSS pixels). We'll scale for DPR.
-  const cssWidth = 640
-  const cssHeight = 640
+  // Smart text-based dimensions with generous padding
+  const calculateOptimalDimensions = useCallback(() => {
+    // Create temporary canvas to measure text
+    const tempCanvas = document.createElement('canvas')
+    const tempCtx = tempCanvas.getContext('2d')
+    if (!tempCtx) return { width: 640, height: 640 }
+
+    // Test with largest expected font to get maximum bounds
+    const testFontSize = fontSize
+    tempCtx.font = `${testFontSize}px "Inter", system-ui, sans-serif`
+
+    // Measure text dimensions
+    const textMetrics = tempCtx.measureText(text)
+    const textWidth = textMetrics.width
+    const textHeight = testFontSize // Approximate height based on font size
+
+    // Add generous padding (40% of font size horizontal, 20% vertical, minimum 60px horizontal, 30px vertical)
+    const paddingX = Math.max(60, testFontSize * 0.4)
+    const paddingY = Math.max(30, testFontSize * 0.2) // Half the vertical padding
+
+    // Calculate optimal dimensions
+    const optimalWidth = Math.ceil(textWidth + (paddingX * 2))
+    const optimalHeight = Math.ceil(textHeight + (paddingY * 2))
+
+    // Ensure minimum dimensions for readability
+    const minWidth = 320
+    const minHeight = 200
+
+    return {
+      width: Math.max(minWidth, optimalWidth),
+      height: Math.max(minHeight, optimalHeight)
+    }
+  }, [text, fontSize])
+
+  const { width: baseWidth, height: baseHeight } = calculateOptimalDimensions()
+
+  // Calculate scale to fit preview container (max 800px width, 600px height for preview)
+  const maxPreviewWidth = 800
+  const maxPreviewHeight = 600
+  const scaleX = baseWidth > maxPreviewWidth ? maxPreviewWidth / baseWidth : 1
+  const scaleY = baseHeight > maxPreviewHeight ? maxPreviewHeight / baseHeight : 1
+  const previewScale = Math.min(scaleX, scaleY, 1) // Never scale up, only down
+
+  // Canvas dimensions (full size for export quality)
+  const cssWidth = baseWidth
+  const cssHeight = baseHeight
 
   // Derived
   const msPerSwitch = useMemo(() => {
@@ -198,12 +361,25 @@ export default function FontSwitcherCanvas() {
     return unique.concat(pad).slice(0, Math.max(2, unique.length + pad.length))
   }, [selectedFonts])
 
-  // Build a long enough font sequence to cover switches; loop if needed.
+  // Note: If switchCount < effectiveFonts.length, some fonts won't appear
+  // This is expected behavior - user controls both values
+
+  // Build a font sequence that cycles through fonts in order
+  // Example: 8 fonts, 20 switches = [font1, font2, font3, font4, font5, font6, font7, font8, font1, font2, font3, font4, font5, font6, font7, font8, font1, font2, font3, font4]
   const fontSequence = useMemo(() => {
     if (effectiveFonts.length < 2) return effectiveFonts
-    const base = shuffleArray(effectiveFonts)
-    const repeats = Math.ceil((switchCount + 1) / base.length)
-    return Array.from({ length: repeats }, () => base).flat()
+
+    const sequence: string[] = []
+
+    // Simply cycle through fonts in order for the specified number of switches
+    for (let i = 0; i < switchCount; i++) {
+      const fontIndex = i % effectiveFonts.length
+      sequence.push(effectiveFonts[fontIndex])
+    }
+
+    // Font sequence built: cycles through all selected fonts in order
+
+    return sequence
   }, [effectiveFonts, switchCount])
 
   // Prepare canvas with DPR scaling
@@ -220,68 +396,55 @@ export default function FontSwitcherCanvas() {
     const ctx = canvas.getContext("2d", { alpha: true })
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    // Store DPR for export consistency
+    canvas.dataset.dpr = dpr.toString()
   }, [])
 
-  // Preload selected fonts on change
-  useEffect(() => {
-    let aborted = false
-    ;(async () => {
-      for (const f of effectiveFonts) {
-        if (aborted) return
-        // For curated/web fonts, inject stylesheet then load. For system/local, still warm via fonts.load.
-        const isLocalOrSystem = localFontFamiliesRef.current.has(f) || availableSystemFonts.includes(f)
-        if (!isLocalOrSystem) {
-          await ensureGoogleFontLoaded(f)
-        }
-        try {
-          await (document as any).fonts.load(`400 48px "${f}"`)
-        } catch {
-          // ignore; canvas will fallback if necessary
-        }
-      }
-    })()
-    return () => {
-      aborted = true
-    }
-  }, [effectiveFonts, availableSystemFonts])
-
-  // Warm up the first slice of the sequence (helps when switches > fonts)
-  useEffect(() => {
-    let cancelled = false
-    const uniques = Array.from(new Set(fontSequence)).slice(0, 16)
-    ;(async () => {
-      for (const f of uniques) {
-        if (cancelled) return
-        try {
-          await (document as any).fonts.load(`400 48px "${f}"`)
-        } catch {
-          // ignore
-        }
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [fontSequence])
+  // Performance optimization refs
+  const fontLoadingTimeoutRef = useRef<NodeJS.Timeout>()
+  const loadedFontsCache = useRef<Set<string>>(new Set())
+  const fontVerificationCache = useRef<Map<string, boolean>>(new Map())
 
   useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      // Preload all fonts in the current sequence
-      const uniques = Array.from(new Set(fontSequence)).slice(0, 32)
-      for (const f of uniques) {
-        if (cancelled) return
+    // Clear previous timeout to debounce rapid changes
+    if (fontLoadingTimeoutRef.current) {
+      clearTimeout(fontLoadingTimeoutRef.current)
+    }
+
+    fontLoadingTimeoutRef.current = setTimeout(async () => {
+      const uniques = Array.from(new Set(fontSequence)).slice(0, 16) // Reduced from 32 to 16
+
+      // Batch font loading for better performance
+      const fontLoadPromises = uniques.map(async (f) => {
+        // Skip if already loaded
+        if (loadedFontsCache.current.has(f)) return
+
         try {
+          const isLocalOrSystem = localFontFamiliesRef.current.has(f) || availableSystemFonts.includes(f)
+          const isGoogleFontCheck = GOOGLE_FONTS.includes(f) || CURATED_FONTS.includes(f)
+
+          if (isGoogleFontCheck && !isLocalOrSystem) {
+            await ensureGoogleFontLoaded(f)
+          }
+
           await (document as any).fonts.load(`400 ${fontSize}px "${f}"`)
+          loadedFontsCache.current.add(f) // Cache successful loads
         } catch {
-          // ignore
+          // Silently ignore font loading errors
         }
-      }
-    })()
+      })
+
+      // Load fonts in parallel instead of sequentially
+      await Promise.allSettled(fontLoadPromises)
+    }, 300) // 300ms debounce
+
     return () => {
-      cancelled = true
+      if (fontLoadingTimeoutRef.current) {
+        clearTimeout(fontLoadingTimeoutRef.current)
+      }
     }
-  }, [fontSequence, fontSize])
+  }, [fontSequence, fontSize, availableSystemFonts])
 
   useEffect(() => {
     if (playing) return
@@ -321,38 +484,55 @@ export default function FontSwitcherCanvas() {
       const idx = Math.floor(elapsed / msPerSwitch) % Math.max(1, fontSequence.length)
       const currentFont = fontSequence[idx] || effectiveFonts[0] || "Inter"
 
-      // Clear
+      // Only redraw if font actually changed (performance optimization)
+      if (idx === lastFontIndexRef.current) {
+        // Same font, just schedule next frame
+        if (elapsed < durationSec * 1000 && playing) {
+          rafRef.current = requestAnimationFrame(drawFrame)
+        } else if (elapsed >= durationSec * 1000 && playing) {
+          startRef.current = nowMs
+          rafRef.current = requestAnimationFrame(drawFrame)
+        }
+        return
+      }
+
+      // Minimal console logging for performance
+      if (process.env.NODE_ENV === 'development' && idx % 10 === 0) {
+        console.log(`Font: "${currentFont}"`)
+      }
+
+      // Clear and redraw only when font changes
       ctx.clearRect(0, 0, cssWidth, cssHeight)
 
-      // Optionally draw an opaque background
+      // Optionally draw background (optimized)
       if (!transparentBg) {
-        ctx.save()
         ctx.fillStyle = bgColor
         ctx.fillRect(0, 0, cssWidth, cssHeight)
-        ctx.restore()
       }
 
-      // Draw centered text
-      ctx.fillStyle = textColor // use text color state
+      // Optimized text rendering
+      ctx.fillStyle = textColor
       ctx.textAlign = "center"
       ctx.textBaseline = "middle"
-      ctx.font = `${fontSize}px "${currentFont}", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif`
+      ctx.imageSmoothingEnabled = false
 
-      const x = cssWidth / 2
-      const y = cssHeight / 2
+      // Cache font string to avoid repeated concatenation
+      const fontString = `${fontSize}px "${currentFont}"`
+      ctx.font = fontString
+
+      // Use cached coordinates
+      const x = Math.round(cssWidth / 2)
+      const y = Math.round(cssHeight / 2)
+
       ctx.fillText(text, x, y)
 
-      // Optional subtle indicator if font switched this frame
-      if (idx !== lastFontIndexRef.current) {
-        lastFontIndexRef.current = idx
-        // console.log("[v0] font ->", currentFont)
-      }
+      // Update font index
+      lastFontIndexRef.current = idx
 
-      // Loop - stop after duration
+      // Schedule next frame
       if (elapsed < durationSec * 1000 && playing) {
         rafRef.current = requestAnimationFrame(drawFrame)
       } else if (elapsed >= durationSec * 1000 && playing) {
-        // Loop from start if still playing
         startRef.current = nowMs
         rafRef.current = requestAnimationFrame(drawFrame)
       }
@@ -401,33 +581,98 @@ export default function FontSwitcherCanvas() {
   }
 
   async function handleRandomize() {
-    const pool = new Set<string>([
-      ...CURATED_FONTS,
-      ...localFontFamilies,
-      ...(allowSystemFonts ? availableSystemFonts : []),
-    ])
-    const normalized = Array.from(pool)
-      .map((n) => n.trim())
-      .filter((n) => n.length > 0)
+    try {
+      const pool = new Set<string>([
+        ...CURATED_FONTS,
+        ...(allowGoogleFonts ? GOOGLE_FONTS : []),
+        ...localFontFamilies,
+        ...(allowSystemFonts ? availableSystemFonts : []),
+      ])
+      const normalized = Array.from(pool)
+        .map((n) => n.trim())
+        .filter((n) => n.length > 0)
 
-    const verified = await verifyUsableFonts(normalized)
+      // Skip verification for randomization - it's too slow and filters out valid fonts
+      // Just shuffle and pick directly from the pool
+      const limit = 8
+      const shuffled = shuffleArray(normalized)
+      const pick = shuffled.slice(0, Math.min(limit, shuffled.length))
 
-    const limit = 8
-    const shuffled = shuffleArray(verified)
-    const pick = shuffled.slice(0, Math.min(limit, shuffled.length))
+      const ensured = pick.length >= 2 ? pick : [...pick, ...CURATED_FONTS].slice(0, Math.max(2, pick.length))
 
-    const ensured = pick.length >= 2 ? pick : [...pick, ...CURATED_FONTS].slice(0, Math.min(limit, 2))
+      setSelectedFonts(ensured)
 
-    setSelectedFonts(ensured)
-    ;(async () => {
-      for (const f of ensured) {
-        try {
-          await (document as any).fonts.load(`400 48px "${f}"`)
-        } catch {
-          // ignore
+      // Optimized font verification with reduced logging and batching
+      setTimeout(async () => {
+        const workingFonts: string[] = []
+
+        // Batch font verification for better performance
+        const verificationPromises = ensured.map(async (f) => {
+          try {
+            const isSystemFont = availableSystemFonts.includes(f) || localFontFamilies.includes(f)
+            const isGoogleFontCheck = checkIsGoogleFont(f) || CURATED_FONTS.includes(f)
+
+            if (isGoogleFontCheck) {
+              // Google/Web fonts - optimized loading
+              try {
+                await ensureGoogleFontLoaded(f)
+                await (document as any).fonts.load(`400 ${fontSize}px "${f}"`)
+                return { font: f, success: true, type: 'Google' }
+              } catch {
+                return { font: f, success: false, type: 'Google' }
+              }
+            } else if (isSystemFont) {
+              // System fonts - quick test
+              try {
+                const works = testFontWorks(f)
+                return { font: f, success: works, type: 'System' }
+              } catch {
+                return { font: f, success: false, type: 'System' }
+              }
+            } else {
+              // Unknown fonts - test with timeout
+              try {
+                await Promise.race([
+                  (document as any).fonts.load(`400 ${fontSize}px "${f}"`),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+                ])
+                const works = testFontWorks(f)
+                return { font: f, success: works, type: 'Unknown' }
+              } catch {
+                return { font: f, success: false, type: 'Unknown' }
+              }
+            }
+          } catch {
+            return { font: f, success: false, type: 'Error' }
+          }
+        })
+
+        // Process all verifications in parallel
+        const results = await Promise.allSettled(verificationPromises)
+
+        results.forEach((result) => {
+          if (result.status === 'fulfilled' && result.value.success) {
+            workingFonts.push(result.value.font)
+          }
+        })
+
+        // Update selection with working fonts (reduced logging)
+        if (workingFonts.length >= 2) {
+          setSelectedFonts(workingFonts)
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`✓ Randomized to ${workingFonts.length} fonts`)
+          }
         }
-      }
-    })()
+      }, 50) // Reduced timeout from 100ms to 50ms
+
+    } catch (error) {
+      console.error("Error randomizing fonts:", error)
+      toast({
+        title: "Randomization failed",
+        description: "Could not randomize fonts. Please try again.",
+        variant: "destructive",
+      })
+    }
   }
 
   // Export via MediaRecorder (WebM). Simple, fast MVP.
@@ -438,104 +683,42 @@ export default function FontSwitcherCanvas() {
     try {
       setExporting(true)
       setExportKind("webm")
-      const blob = await captureWebMBlob(canvas, durationSec * 1000, 30) // Use captureWebMBlob function
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = "rapid-font-fx.webm"
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      console.error("[v0] export webm error:", err)
-      alert("Export (WebM) failed. Try a shorter duration or fewer switches.")
-    } finally {
-      setExportKind(null)
-      setExporting(false)
-    }
-  }
 
-  async function loadFFmpeg() {
-    const mod: any = await import("@ffmpeg/ffmpeg")
-    const createFFmpeg = mod?.createFFmpeg || mod?.default?.createFFmpeg
-    const fetchFile = mod?.fetchFile || mod?.default?.fetchFile
-    if (!createFFmpeg || !fetchFile) {
-      throw new Error("FFmpeg module not available in this environment")
-    }
-    return { createFFmpeg, fetchFile }
-  }
-
-  async function handleExportGIF() {
-    try {
-      setExporting(true)
-      setExportKind("gif")
-
-      const canvas = canvasRef.current
-      if (!canvas) throw new Error("Canvas not available")
-
-      // Capture frames from canvas animation
-      const frames: ImageData[] = []
-      const frameCount = Math.ceil((durationSec * 1000) / 50) // 20 fps for GIF
-      const frameDuration = (durationSec * 1000) / frameCount
-
-      // Temporarily play and capture frames
+      // Ensure animation is playing during recording
       const wasPlaying = playing
       setPlaying(true)
+
+      // Reset animation to start
       startRef.current = null
       lastFontIndexRef.current = -1
 
-      // Capture frames by rendering each frame
-      for (let i = 0; i < frameCount; i++) {
-        const nowMs = i * frameDuration
-        drawFrame(nowMs)
-        const ctx = canvas.getContext("2d")
-        if (ctx) {
-          frames.push(ctx.getImageData(0, 0, canvas.width, canvas.height))
-        }
-        await new Promise((r) => setTimeout(r, 10)) // Small delay to allow rendering
-      }
+      // Small delay to ensure animation starts
+      await new Promise(resolve => setTimeout(resolve, 100))
 
-      // Restore playing state
+      const blob = await captureWebMBlob(canvas, durationSec * 1000, 30)
+
+      // Restore original playing state
       if (!wasPlaying) setPlaying(false)
 
-      // Use gif.js to encode frames
-      const gifWorkerScript = `
-        self.onmessage = function(e) {
-          const { frames, width, height, delay } = e.data;
-          const gif = new GIF({ workers: 1, quality: 10, width, height, workerScript: undefined });
-          frames.forEach(frameData => {
-            const canvas = new OffscreenCanvas(width, height);
-            const ctx = canvas.getContext('2d');
-            ctx.putImageData(frameData, 0, 0);
-            gif.addFrame(canvas, { delay });
-          });
-          gif.on('finished', blob => {
-            self.postMessage({ blob });
-          });
-          gif.render();
-        };
-      `
-
-      // Fallback: use a simpler approach with canvas-based GIF encoding
-      // Since gif.js might not be available, we'll use a minimal GIF encoder
-      const gifBlob = await encodeGIFFromFrames(frames, canvas.width, canvas.height, Math.round(frameDuration))
-
-      const url = URL.createObjectURL(gifBlob)
+      const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = url
-      a.download = "rapid-font-fx.gif"
+      const safeText = createSafeFilename(text)
+      a.download = `type-cut-${safeText}.webm`
       document.body.appendChild(a)
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
 
-      toast({ title: "GIF exported", description: "Your animation is ready." })
-    } catch (err) {
-      console.error("[v0] export gif error:", err)
       toast({
-        title: "GIF export failed",
-        description: "Try a shorter duration or use WebM export instead.",
+        title: "WebM exported",
+        description: transparentBg ? "Your animation with transparent background is ready." : "Your animation is ready."
+      })
+    } catch (err) {
+      console.error("[v0] export webm error:", err)
+      toast({
+        title: "WebM export failed",
+        description: err instanceof Error ? err.message : "Try a shorter duration or fewer switches.",
         variant: "destructive",
       })
     } finally {
@@ -544,96 +727,210 @@ export default function FontSwitcherCanvas() {
     }
   }
 
-  async function encodeGIFFromFrames(
-    frames: ImageData[],
-    width: number,
-    height: number,
-    delayMs: number,
-  ): Promise<Blob> {
-    // Minimal GIF89a encoder
-    const gif: number[] = []
+  // Removed unused FFmpeg function
 
-    // GIF header
-    gif.push(...[0x47, 0x49, 0x46]) // "GIF"
-    gif.push(...[0x38, 0x39, 0x61]) // "89a"
+  async function handleExportGIF() {
+    try {
+      setExporting(true)
+      setExportKind("gif")
+      setExportProgress(0)
 
-    // Logical Screen Descriptor
-    gif.push(width & 0xff, (width >> 8) & 0xff) // width
-    gif.push(height & 0xff, (height >> 8) & 0xff) // height
-    gif.push(0xf7) // packed fields (global color table, 256 colors)
-    gif.push(0) // background color index
-    gif.push(0) // aspect ratio
+      const canvas = canvasRef.current
+      if (!canvas) throw new Error("Canvas not available")
 
-    // Global Color Table (256 colors, 3 bytes each)
-    for (let i = 0; i < 256; i++) {
-      gif.push(i, i, i) // grayscale palette
-    }
+      toast({
+        title: "Creating high-res GIF...",
+        description: "Rendering with hard edges for maximum crispness"
+      })
 
-    // Application Extension (for looping)
-    gif.push(0x21, 0xff, 0x0b) // extension introducer, label
-    gif.push(...[0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30]) // "NETSCAPE2.0"
-    gif.push(0x03, 0x01, 0x00, 0x00, 0x00) // sub-block
+      // Import gifenc - modern, faster GIF encoder
+      const { GIFEncoder, quantize, applyPalette } = await import('gifenc')
 
-    // Add frames
-    for (const frame of frames) {
-      // Graphics Control Extension
-      gif.push(0x21, 0xf9, 0x04) // extension introducer, label
-      gif.push(0x00) // packed fields
-      gif.push(delayMs & 0xff, (delayMs >> 8) & 0xff) // delay time
-      gif.push(0, 0) // transparent color index, block terminator
+      // Create a dedicated HIGH-RESOLUTION canvas for GIF export with smart cropping
+      // This eliminates DPR scaling issues and ensures pixel-perfect rendering
+      const exportCanvas = document.createElement('canvas')
+      const exportScale = 2 // 2x resolution for crisp text
 
-      // Image Descriptor
-      gif.push(0x2c) // image separator
-      gif.push(0, 0, 0, 0) // left, top
-      gif.push(width & 0xff, (width >> 8) & 0xff) // width
-      gif.push(height & 0xff, (height >> 8) & 0xff) // height
-      gif.push(0) // packed fields (no local color table)
+      // Use smart text-based dimensions for export
+      const exportDimensions = calculateOptimalDimensions()
+      exportCanvas.width = exportDimensions.width * exportScale
+      exportCanvas.height = exportDimensions.height * exportScale
 
-      // Image data (simplified: just use LZW compression stub)
-      const imageData = frame.data
-      const lzwData = lzwEncode(imageData)
-      gif.push(0x08) // LZW minimum code size
-      addDataSubBlocks(gif, lzwData)
-    }
+      const exportCtx = exportCanvas.getContext('2d', {
+        willReadFrequently: true,
+        alpha: true,
+        desynchronized: false // Force synchronous rendering for consistency
+      })
+      if (!exportCtx) throw new Error("Export canvas context not available")
 
-    // Trailer
-    gif.push(0x3b)
+      // Configure export context for MAXIMUM crispness
+      exportCtx.setTransform(exportScale, 0, 0, exportScale, 0, 0)
 
-    return new Blob([new Uint8Array(gif)], { type: "image/gif" })
-  }
-
-  function lzwEncode(data: Uint8ClampedArray): number[] {
-    const result: number[] = []
-    const dictSize = 256
-    const dict: Record<string, number> = {}
-    for (let i = 0; i < dictSize; i++) {
-      dict[String.fromCharCode(i)] = i
-    }
-
-    let w = String.fromCharCode(data[0])
-    for (let i = 1; i < data.length; i++) {
-      const c = String.fromCharCode(data[i])
-      const wc = w + c
-      if (wc in dict) {
-        w = wc
-      } else {
-        result.push(dict[w])
-        dict[wc] = dictSize + Object.keys(dict).length
-        w = c
+      // CRITICAL: Disable ALL smoothing and anti-aliasing
+      exportCtx.imageSmoothingEnabled = false
+      // @ts-ignore - textRenderingOptimization is experimental
+      if ('textRenderingOptimization' in exportCtx) {
+        exportCtx.textRenderingOptimization = 'geometricPrecision' // Sharp edges
       }
+      // @ts-ignore - fontKerning is experimental  
+      if ('fontKerning' in exportCtx) {
+        exportCtx.fontKerning = 'none'
+      }
+
+      // CRITICAL: Use EXACT same timing as preview for consistency
+      const totalDurationMs = durationSec * 1000
+      const frameRate = 10 // 10 FPS for smooth animation
+      const frameDuration = 1000 / frameRate // 100ms per frame
+      const frameCount = Math.ceil(totalDurationMs / frameDuration)
+
+      const wasPlaying = playing
+      setPlaying(false) // Stop preview animation
+
+      // Step 1: Capture frames with HARD EDGES (0-50% progress)
+      toast({
+        title: "Capturing frames...",
+        description: `Rendering ${frameCount} frames at 2x resolution with hard edges`
+      })
+
+      const frames: ImageData[] = []
+      for (let i = 0; i < frameCount; i++) {
+        const elapsed = i * frameDuration
+        const idx = Math.floor(elapsed / msPerSwitch) % Math.max(1, fontSequence.length)
+        const currentFont = fontSequence[idx] || effectiveFonts[0] || "Inter"
+
+        // Clear with transparency using export dimensions
+        exportCtx.clearRect(0, 0, exportDimensions.width, exportDimensions.height)
+
+        // Draw solid background if needed (NO gradients, NO anti-aliasing)
+        if (!transparentBg) {
+          exportCtx.fillStyle = bgColor
+          exportCtx.fillRect(0, 0, exportDimensions.width, exportDimensions.height)
+        }
+
+        // CRITICAL: Text rendering with HARD EDGES
+        exportCtx.fillStyle = textColor
+        exportCtx.textAlign = "center"
+        exportCtx.textBaseline = "middle"
+
+        // Force pixel-perfect positioning using export dimensions
+        const x = Math.floor(exportDimensions.width / 2) + 0.5 // +0.5 for crisp pixel alignment
+        const y = Math.floor(exportDimensions.height / 2) + 0.5
+
+        // Use integer font size to avoid sub-pixel scaling
+        const crispFontSize = Math.floor(fontSize)
+        exportCtx.font = `${crispFontSize}px "${currentFont}", monospace` // Add monospace fallback for consistency
+
+        // Render text with hard edges
+        exportCtx.fillText(text, x, y)
+
+        // Capture high-res frame data
+        frames.push(exportCtx.getImageData(0, 0, exportCanvas.width, exportCanvas.height))
+
+        setExportProgress(Math.round((i + 1) / frameCount * 50))
+
+        if (i % 3 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1))
+        }
+      }
+
+      setPlaying(wasPlaying)
+
+      // Step 2: Create MINIMAL color palette for hard edges (50-60% progress)
+      toast({
+        title: "Creating minimal palette...",
+        description: "Using only essential colors for hard edges"
+      })
+      setExportProgress(55)
+
+      // Use VERY FEW colors to force hard edges (no intermediate colors = no blur)
+      const paletteSize = transparentBg ? 16 : 8 // Minimal colors for maximum crispness
+      const palette = quantize(frames[0].data, paletteSize, {
+        format: 'rgb444', // Lower color depth = harder edges
+        oneBitAlpha: transparentBg,
+        clearAlpha: transparentBg,
+        clearAlphaThreshold: 128 // Sharp alpha cutoff
+      })
+      setExportProgress(60)
+
+      // Step 3: Encode with hard edges (60-95% progress)
+      toast({
+        title: "Encoding with hard edges...",
+        description: "Creating crisp animated GIF"
+      })
+
+      const gif = GIFEncoder()
+
+      for (let i = 0; i < frames.length; i++) {
+        // Apply palette with minimal dithering for hard edges
+        const indexed = applyPalette(frames[i].data, palette)
+
+        gif.writeFrame(indexed, exportCanvas.width, exportCanvas.height, {
+          palette,
+          delay: Math.round(frameDuration / 10),
+          dispose: 2, // Clear frame for clean transitions
+          transparent: transparentBg
+        })
+
+        setExportProgress(Math.round(60 + (i + 1) / frames.length * 35))
+
+        if (i % 2 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1))
+        }
+      }
+
+      // Step 4: Finalize
+      toast({
+        title: "Finalizing...",
+        description: "Preparing crisp GIF download"
+      })
+      setExportProgress(95)
+
+      gif.finish()
+      const buffer = gif.bytes()
+      setExportProgress(98)
+
+      const blob = new Blob([buffer as any], { type: 'image/gif' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const safeText = createSafeFilename(text)
+      link.download = `type-cut-${safeText}.gif`
+      link.href = url
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      setExportProgress(100)
+
+      toast({
+        title: "Crisp GIF exported!",
+        description: `${frameCount} frames, ${(blob.size / 1024).toFixed(0)}KB - 2x resolution with hard edges`
+      })
+
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      setExportKind(null)
+      setExporting(false)
+      setExportProgress(0)
+
+    } catch (err) {
+      console.error("[v0] export gif error:", err)
+      toast({
+        title: "GIF export failed",
+        description: err instanceof Error ? err.message : "Try using WebM export for better results.",
+        variant: "destructive",
+      })
+    } finally {
+      setExportKind(null)
+      setExporting(false)
+      setExportProgress(0)
     }
-    if (w) result.push(dict[w])
-    return result
   }
 
-  function addDataSubBlocks(gif: number[], data: number[]): void {
-    for (let i = 0; i < data.length; i += 255) {
-      const chunk = data.slice(i, i + 255)
-      gif.push(chunk.length)
-      gif.push(...chunk)
-    }
-    gif.push(0) // block terminator
-  }
+  // Removed complex GIF encoder - using WebM instead for reliability
+
+  // Removed the complex and buggy GIF encoder functions
+  // The GIF export now uses a simpler approach that doesn't hang the browser
 
   async function handleExportAEScript() {
     try {
@@ -657,11 +954,14 @@ export default function FontSwitcherCanvas() {
         })
         .join("\n")
 
-      const jsx = `// RapidFontFX AE Script (generated)
+      // Use optimized dimensions for After Effects
+      const aeDimensions = calculateOptimalDimensions()
+
+      const jsx = `// TypeCut AE Script (generated with optimized dimensions)
 (function(){
-  app.beginUndoGroup("RapidFontFX");
+  app.beginUndoGroup("TypeCut");
   var proj = app.project || app.newProject();
-  var comp = proj.items.addComp("RapidFontFX", ${cssWidth}, ${cssHeight}, 1.0, ${durationSec}, ${fps});
+  var comp = proj.items.addComp("TypeCut", ${aeDimensions.width}, ${aeDimensions.height}, 1.0, ${durationSec}, ${fps});
   var textLayer = comp.layers.addText(${JSON.stringify(text)});
   var tdProp = textLayer.property("Source Text");
   var td = tdProp.value;
@@ -677,7 +977,8 @@ ${keyframeLines}
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = url
-      a.download = "rapid-font-fx.jsx"
+      const safeText = createSafeFilename(text)
+      a.download = `type-cut-${safeText}.jsx`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -693,7 +994,7 @@ ${keyframeLines}
     const family = file.name.replace(/\.(ttf|otf|woff2?|TTF|OTF|WOFF2?)$/, "")
     const face = new FontFace(family, buf)
     await face.load()
-    ;(document as any).fonts.add(face)
+      ; (document as any).fonts.add(face)
     localFontFamiliesRef.current.add(family)
     setLocalFontFamilies((prev) => (prev.includes(family) ? prev : [...prev, family]))
     setSelectedFonts((prev) => (prev.includes(family) ? prev : [...prev, family]))
@@ -729,7 +1030,7 @@ ${keyframeLines}
     try {
       // @ts-ignore
       const fonts = await window.queryLocalFonts()
-      const names = Array.from(new Set(fonts.map((f: any) => f.fullName)))
+      const names = Array.from(new Set(fonts.map((f: any) => f.fullName))) as string[]
       setAvailableSystemFonts(names)
       setSysFontStatus("ready")
       toast({ title: "System fonts ready", description: `${names.length} fonts available.` })
@@ -754,38 +1055,31 @@ ${keyframeLines}
   }
 
   function toggleChecked(name: string) {
-    setCheckedMap((m) => ({ ...m, [name]: !m[name] }))
-  }
-  function setAllChecked(value: boolean) {
-    const next: Record<string, boolean> = {}
-    filteredCatalog.forEach((n) => {
-      next[n] = value
-    })
-    setCheckedMap(next)
-  }
-  function addCheckedToSelection() {
-    const toAdd = Object.entries(checkedMap)
-      .filter(([_, v]) => v)
-      .map(([k]) => k)
-    if (toAdd.length === 0) return
-    setSelectedFonts((prev) => {
-      const s = new Set(prev)
-      toAdd.forEach((n) => s.add(n))
-      return Array.from(s).slice(0, 50)
-    })
-    setFontDropdownOpen(false)
+    const isCurrentlySelected = selectedFonts.includes(name)
+
+    if (isCurrentlySelected) {
+      // Remove from selected fonts
+      setSelectedFonts((prev) => prev.filter(f => f !== name))
+    } else {
+      // Add to selected fonts (limit to 50)
+      setSelectedFonts((prev) => {
+        const newList = [...prev, name]
+        return newList.slice(0, 50)
+      })
+    }
   }
 
-  // Build a combined catalog: curated + installed locals + system (if available)
+  // Build a combined catalog: curated + google fonts + installed locals + system (if available)
   const catalog = useMemo(() => {
     const s = new Set<string>([
       ...CURATED_FONTS,
+      ...(allowGoogleFonts ? GOOGLE_FONTS : []),
       ...localFontFamilies,
       ...(allowSystemFonts ? availableSystemFonts : []),
       ...selectedFonts, // include selected so they can be managed
     ])
     return Array.from(s).sort((a, b) => a.localeCompare(b))
-  }, [availableSystemFonts, localFontFamilies, selectedFonts, allowSystemFonts])
+  }, [allowGoogleFonts, availableSystemFonts, localFontFamilies, selectedFonts, allowSystemFonts])
 
   const filteredCatalog = useMemo(() => {
     const q = fontSearch.trim().toLowerCase()
@@ -815,9 +1109,9 @@ ${keyframeLines}
   }
 
   return (
-    <div className="rounded-lg border overflow-hidden">
-      <div className="p-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+    <div className="rounded-lg border overflow-hidden max-w-7xl mx-auto">
+      <div className="p-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
           {/* Controls */}
           <div className="rounded-lg border p-4 md:p-5 h-full">
             <div className="space-y-4">
@@ -838,7 +1132,7 @@ ${keyframeLines}
                   min={1}
                   max={10}
                   step={1}
-                  onValueChange={(v) => setDurationSec(v[0] ?? 3)}
+                  onValueChange={(v: number[]) => setDurationSec(v[0] ?? 3)}
                 />
               </div>
 
@@ -849,28 +1143,41 @@ ${keyframeLines}
                   min={2}
                   max={100}
                   step={1}
-                  onValueChange={(v) => setSwitchCount(v[0] ?? 20)}
+                  onValueChange={(v: number[]) => setSwitchCount(v[0] ?? 20)}
                 />
               </div>
 
               <div className="space-y-2">
                 <Label>Text size: {fontSize}px</Label>
-                <Slider value={[fontSize]} min={48} max={240} step={2} onValueChange={(v) => setFontSize(v[0] ?? 80)} />
+                <Slider value={[fontSize]} min={48} max={240} step={2} onValueChange={(v: number[]) => setFontSize(v[0] ?? 80)} />
               </div>
 
               <div className="space-y-2">
                 <Label>Text color</Label>
-                <Input id="text-color" type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} />
+                <Input id="text-color" type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-20" />
+              </div>
+
+
+
+              <div className="flex items-center justify-between gap-3">
+                <label htmlFor="allow-google-fonts" className="text-sm font-medium">
+                  Google Fonts ({GOOGLE_FONTS.length} fonts)
+                </label>
+                <Switch
+                  id="allow-google-fonts"
+                  checked={allowGoogleFonts}
+                  onCheckedChange={setAllowGoogleFonts}
+                />
               </div>
 
               <div className="flex items-center justify-between gap-3">
                 <label htmlFor="allow-system-fonts" className="text-sm font-medium">
-                  Allow system fonts
+                  System fonts
                 </label>
                 <Switch
                   id="allow-system-fonts"
                   checked={allowSystemFonts}
-                  onCheckedChange={(v) => {
+                  onCheckedChange={(v: boolean) => {
                     setAllowSystemFonts(v)
                     // don't call loadSystemFontCatalog() here; effect above will handle it once.
                   }}
@@ -889,14 +1196,14 @@ ${keyframeLines}
                       id="add-font-by-name"
                       placeholder="Add font by name (e.g., Bebas Neue)"
                       value={fontSearch}
-                      onChange={(e) => {
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                         setFontSearch(e.target.value)
                         if (!fontDropdownOpen) setFontDropdownOpen(true)
                       }}
                       onFocus={() => setFontDropdownOpen(true)}
                       onClick={() => setFontDropdownOpen(true)}
                       onMouseDown={() => setFontDropdownOpen(true)}
-                      onKeyDown={(e) => {
+                      onKeyDown={(e: React.KeyboardEvent) => {
                         if (e.key === "Escape") setFontDropdownOpen(false)
                       }}
                       aria-autocomplete="list"
@@ -908,52 +1215,55 @@ ${keyframeLines}
                     className="w-(--radix-popover-trigger-width) p-0"
                     align="start"
                     // prevent Radix from focusing content, which would blur the input and close the popover
-                    onOpenAutoFocus={(e) => e.preventDefault()}
-                    onCloseAutoFocus={(e) => e.preventDefault()}
+                    onOpenAutoFocus={(e: Event) => e.preventDefault()}
+                    onCloseAutoFocus={(e: Event) => e.preventDefault()}
                   >
                     <Command shouldFilter={false}>
-                      <CommandList id="font-command-list">
+                      <CommandList id="font-command-list" className="max-h-[400px] overflow-y-auto">
                         <CommandEmpty>No fonts found.</CommandEmpty>
                         <CommandGroup heading="Fonts">
-                          {filteredCatalog.slice(0, 200).map((name) => {
-                            const checked = !!checkedMap[name]
+                          {filteredCatalog.map((name) => {
+                            const checked = selectedFonts.includes(name)
+                            const isGoogle = checkIsGoogleFont(name) || CURATED_FONTS.includes(name)
+                            const isSystem = availableSystemFonts.includes(name)
+                            const isLocal = localFontFamilies.includes(name)
+
                             return (
                               <CommandItem
                                 key={name}
                                 value={name}
                                 // prevent input blur before selection toggles state
-                                onMouseDown={(e) => e.preventDefault()}
+                                onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
                                 onSelect={() => toggleChecked(name)}
-                                className="flex items-center gap-2"
+                                className="flex items-center gap-2 py-3"
                               >
                                 <Checkbox
                                   checked={checked}
                                   // prevent focus/blur ripple by handling mouse down
-                                  onMouseDown={(e) => e.preventDefault()}
+                                  onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
                                   onCheckedChange={() => toggleChecked(name)}
                                 />
-                                <span className="truncate">{name}</span>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="truncate font-medium">{name}</span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {isGoogle ? "Google" : isSystem ? "System" : isLocal ? "Local" : ""}
+                                    </span>
+                                  </div>
+                                  <div
+                                    className="text-sm text-muted-foreground mt-1 truncate"
+                                    style={{ fontFamily: `"${name}", system-ui, sans-serif` }}
+                                  >
+                                    The quick brown fox jumps
+                                  </div>
+                                </div>
                               </CommandItem>
                             )
                           })}
                         </CommandGroup>
                       </CommandList>
-                      <div className="flex items-center gap-2 p-2 border-t">
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            addCheckedToSelection()
-                            setFontDropdownOpen(false)
-                          }}
-                        >
-                          Add selected
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => setAllChecked(true)}>
-                          Select all
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => setAllChecked(false)}>
-                          Clear
-                        </Button>
+                      <div className="p-2 border-t text-xs text-muted-foreground text-center">
+                        Check fonts to add them automatically
                       </div>
                     </Command>
                   </PopoverContent>
@@ -1027,7 +1337,7 @@ ${keyframeLines}
             />
             <div className="flex flex-wrap gap-2">
               <Button
-                className="bg-background text-foreground border-accent border-2"
+                variant="outline"
                 onClick={handleExportWebM}
                 disabled={exporting || selectedFonts.length < 2}
                 aria-label="Export WebM"
@@ -1039,10 +1349,10 @@ ${keyframeLines}
                 disabled={exporting || selectedFonts.length < 2}
                 aria-label="Export GIF"
               >
-                {exporting && exportKind === "gif" ? "Exporting…" : "Export GIF"}
+                {exporting && exportKind === "gif" ? `Exporting… ${exportProgress}%` : "Export GIF"}
               </Button>
               <Button
-                className="text-foreground bg-background border-accent border-2"
+                variant="outline"
                 onClick={handleExportAEScript}
                 disabled={exporting}
                 aria-label="Export After Effects Script"

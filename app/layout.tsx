@@ -1,14 +1,24 @@
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { Domine, Manrope } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
+import Navbar from '@/components/navbar'
 import './globals.css'
 
-const _geist = Geist({ subsets: ["latin"] });
-const _geistMono = Geist_Mono({ subsets: ["latin"] });
+const domine = Domine({ 
+  subsets: ["latin"],
+  variable: '--font-domine',
+  display: 'swap',
+});
+
+const manrope = Manrope({ 
+  subsets: ["latin"],
+  variable: '--font-manrope',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
+  title: 'TypeCut - Animated Font Switching Tool',
+  description: 'Create stunning animated font switching effects for social media. Export as WebM, GIF, or After Effects scripts.',
   generator: 'v0.app',
 }
 
@@ -19,8 +29,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`font-sans antialiased`}>
-        {children}
+      <body className={`${manrope.variable} ${domine.variable} font-sans antialiased`}>
+        <div className="h-screen flex flex-col overflow-hidden">
+          <Navbar />
+          <div className="flex-1 overflow-hidden">
+            {children}
+          </div>
+        </div>
         <Analytics />
       </body>
     </html>

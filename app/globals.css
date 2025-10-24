@@ -119,5 +119,18 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-manrope), system-ui, sans-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-domine), serif;
+  }
+  
+  .font-serif {
+    font-family: var(--font-domine), serif;
+  }
+  
+  .font-sans {
+    font-family: var(--font-manrope), system-ui, sans-serif;
   }
 }
